@@ -1,74 +1,200 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import tensorflow as tf
+from tensorflow.keras import layers
 
+# ---------------------------------------------------------
+# Transformer Encoder Block
+# ---------------------------------------------------------
 
-class VisionTransformerEncoder(nn.Module):
+class TransformerEncoderBlock(layers.Layer):
     def __init__(
         self,
-        image_size: int = 224,
-        patch_size: int = 16,
-        dim: int = 768,
-        depth: int = 14,
-        num_heads: int = 12,
-        mlp_ratio: float = 4.0,
-        dropout: float = 0.0,
+        dim,
+        num_heads,
+        mlp_ratio=4.0,
+        dropout=0.0,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+
+        self.norm1 = layers.LayerNormalization(epsilon=1e-6)
+
+        self.attn = layers.MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=dim // num_heads,
+            dropout=dropout,
+        )
+
+        self.norm2 = layers.LayerNormalization(epsilon=1e-6)
+
+        self.mlp = tf.keras.Sequential([
+            layers.Dense(int(dim * mlp_ratio), activation=tf.nn.gelu),
+            layers.Dropout(dropout),
+            layers.Dense(dim),
+        ])
+
+    def call(self, x, training=False):
+
+        # Self Attention
+        attn = self.attn(
+            query=self.norm1(x),
+            value=self.norm1(x),
+            key=self.norm1(x),
+            training=training,
+        )
+
+        x = x + attn
+
+        # Feed Forward
+        ff = self.mlp(
+            self.norm2(x),
+            training=training,
+        )
+
+        x = x + ff
+
+        return x
+
+
+# ---------------------------------------------------------
+# Vision Transformer Encoder
+# ---------------------------------------------------------
+
+class VisionTransformerEncoder(tf.keras.Model):
+
+    def __init__(
+        self,
+        image_size=224,
+        patch_size=16,
+        dim=768,
+        depth=14,
+        num_heads=12,
+        mlp_ratio=4.0,
+        dropout=0.0,
     ):
         super().__init__()
 
         if image_size % patch_size != 0:
-            raise ValueError("image_size must be divisible by patch_size")
+            raise ValueError(
+                "image_size must be divisible by patch_size"
+            )
 
         self.image_size = image_size
         self.patch_size = patch_size
         self.dim = dim
 
-        self.patch_embed = nn.Conv2d(3, dim, kernel_size=patch_size, stride=patch_size, bias=True)
-        num_patches = (image_size // patch_size) ** 2
-
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, 1 + num_patches, dim))
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=dim,
-            nhead=num_heads,
-            dim_feedforward=int(dim * mlp_ratio),
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=False,
+        # Patch Embedding
+        self.patch_embed = layers.Conv2D(
+            filters=dim,
+            kernel_size=patch_size,
+            strides=patch_size,
+            padding="valid",
+            use_bias=True,
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=depth, norm=None)
-        self.norm = nn.LayerNorm(dim)
-        self.proj = nn.Linear(dim, dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, 3, H, W]
-        x = self.patch_embed(x)  # [B, D, H', W']
-        x = x.flatten(2).transpose(1, 2)  # [B, N, D]
+        self.num_patches = (
+            image_size // patch_size
+        ) ** 2
 
-        b = x.shape[0]
-        cls = self.cls_token.expand(b, -1, -1)
-        x = torch.cat([cls, x], dim=1)  # [B, 1+N, D]
-        x = x + self.pos_embed[:, : x.shape[1]]
+        # Learnable CLS Token
+        self.cls_token = self.add_weight(
+            name="cls_token",
+            shape=(1, 1, dim),
+            initializer="zeros",
+            trainable=True,
+        )
 
-        x = self.encoder(x)
+        # Learnable Position Embeddings
+        self.pos_embed = self.add_weight(
+            name="pos_embed",
+            shape=(1, self.num_patches + 1, dim),
+            initializer="zeros",
+            trainable=True,
+        )
+
+        # Transformer Encoder
+        self.encoder = [
+            TransformerEncoderBlock(
+                dim=dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                dropout=dropout,
+            )
+            for _ in range(depth)
+        ]
+
+        self.norm = layers.LayerNormalization(
+            epsilon=1e-6
+        )
+
+        self.proj = layers.Dense(dim)
+
+    def call(self, x, training=False):
+        """
+        x : [B,H,W,3]
+        Returns:
+            [B,197,768]
+        """
+
+        # Patch Embedding
+        # [B,14,14,768]
+        x = self.patch_embed(x)
+
+        batch = tf.shape(x)[0]
+
+        # Flatten patches
+        # [B,196,768]
+        x = tf.reshape(
+            x,
+            [
+                batch,
+                self.num_patches,
+                self.dim,
+            ],
+        )
+
+        # CLS Token
+        cls = tf.broadcast_to(
+            self.cls_token,
+            [batch, 1, self.dim],
+        )
+
+        x = tf.concat(
+            [cls, x],
+            axis=1,
+        )
+
+        # Position Embedding
+        x = x + self.pos_embed[:, : tf.shape(x)[1], :]
+
+        # Transformer Layers
+        for layer in self.encoder:
+            x = layer(
+                x,
+                training=training,
+            )
+
         x = self.norm(x)
+
         x = self.proj(x)
+
         return x
+    
+# ---------------------------------------------------------
+# Text Transformer Encoder
+# ---------------------------------------------------------
 
+class TextTransformerEncoder(tf.keras.Model):
 
-class TextTransformerEncoder(nn.Module):
     def __init__(
         self,
-        vocab_size: int,
-        max_len: int = 24,
-        embed_dim: int = 384,
-        out_dim: int = 768,
-        depth: int = 8,
-        num_heads: int = 12,
-        mlp_ratio: float = 2.0,
-        dropout: float = 0.0,
+        vocab_size,
+        max_len=24,
+        embed_dim=384,
+        out_dim=768,
+        depth=8,
+        num_heads=12,
+        mlp_ratio=2.0,
+        dropout=0.0,
     ):
         super().__init__()
 
@@ -77,117 +203,282 @@ class TextTransformerEncoder(nn.Module):
         self.embed_dim = embed_dim
         self.out_dim = out_dim
 
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.embedding = nn.Embedding(vocab_size, embed_dim)
-        self.pos_embedding = nn.Embedding(max_len + 1, embed_dim)
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=int(embed_dim * mlp_ratio),
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=False,
+        # Learnable CLS token
+        self.cls_token = self.add_weight(
+            name="cls_token",
+            shape=(1, 1, embed_dim),
+            initializer="zeros",
+            trainable=True,
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=depth, norm=None)
-        self.proj = nn.Linear(embed_dim, out_dim)
 
-    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        # token_ids: [B, L]
-        b, l = token_ids.shape
-        if l > self.max_len:
-            token_ids = token_ids[:, : self.max_len]
-            l = self.max_len
+        # Token Embedding
+        self.embedding = layers.Embedding(
+            input_dim=vocab_size,
+            output_dim=embed_dim,
+        )
 
-        x = self.embedding(token_ids)  # [B, L, E]
-        pos_ids = torch.arange(l + 1, device=token_ids.device).unsqueeze(0).expand(b, -1)
+        # Position Embedding
+        self.pos_embedding = layers.Embedding(
+            input_dim=max_len + 1,
+            output_dim=embed_dim,
+        )
 
-        cls = self.cls_token.expand(b, -1, -1)  # [B, 1, E]
-        x = torch.cat([cls, x], dim=1)  # [B, 1+L, E]
-        x = x + self.pos_embedding(pos_ids)  # [B, 1+L, E]
+        # Transformer Encoder Stack
+        self.encoder = [
+            TransformerEncoderBlock(
+                dim=embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                dropout=dropout,
+            )
+            for _ in range(depth)
+        ]
 
-        x = self.encoder(x)  # [B, 1+L, E]
-        x = self.proj(x)  # [B, 1+L, D]
+        # Final projection
+        self.proj = layers.Dense(out_dim)
+
+    def call(
+        self,
+        token_ids,
+        training=False,
+    ):
+        """
+        token_ids : [B,L]
+
+        Returns:
+            [B,L+1,out_dim]
+        """
+
+        token_ids = tf.cast(token_ids, tf.int32)
+
+        batch = tf.shape(token_ids)[0]
+        length = tf.shape(token_ids)[1]
+
+        # Truncate if necessary
+        token_ids = token_ids[:, : self.max_len]
+
+        length = tf.shape(token_ids)[1]
+
+        # Word Embeddings
+        x = self.embedding(token_ids)
+
+        # CLS Token
+        cls = tf.broadcast_to(
+            self.cls_token,
+            [batch, 1, self.embed_dim],
+        )
+
+        x = tf.concat(
+            [cls, x],
+            axis=1,
+        )
+
+        # Position IDs
+        pos_ids = tf.range(length + 1)
+        pos_ids = tf.expand_dims(pos_ids, 0)
+        pos_ids = tf.tile(pos_ids, [batch, 1])
+
+        # Position Embeddings
+        x = x + self.pos_embedding(pos_ids)
+
+        # Transformer Encoder
+        for block in self.encoder:
+            x = block(
+                x,
+                training=training,
+            )
+
+        # Projection to hidden dimension
+        x = self.proj(x)
+
         return x
+# ---------------------------------------------------------
+# Feed Forward Network
+# ---------------------------------------------------------
 
-
-class FeedForward(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int, dropout: float = 0.0):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, dim),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-
-class FusionLayer(nn.Module):
+class FeedForward(tf.keras.layers.Layer):
     def __init__(
         self,
-        dim: int = 768,
-        num_heads: int = 12,
-        mlp_ratio: float = 4.0,
-        dropout: float = 0.0,
+        dim,
+        hidden_dim,
+        dropout=0.0,
     ):
         super().__init__()
 
-        self.q_norm1 = nn.LayerNorm(dim)
-        self.v_norm1 = nn.LayerNorm(dim)
-        self.q_norm2 = nn.LayerNorm(dim)
-        self.v_norm2 = nn.LayerNorm(dim)
+        self.net = tf.keras.Sequential([
+            layers.Dense(hidden_dim),
+            layers.Activation(tf.nn.gelu),
+            layers.Dropout(dropout),
+            layers.Dense(dim),
+        ])
 
-        self.q_to_v = nn.MultiheadAttention(dim, num_heads, dropout=dropout, batch_first=True)
-        self.v_to_q = nn.MultiheadAttention(dim, num_heads, dropout=dropout, batch_first=True)
+    def call(
+        self,
+        x,
+        training=False,
+    ):
+        return self.net(
+            x,
+            training=training,
+        )
 
-        self.q_ff = FeedForward(dim, int(dim * mlp_ratio), dropout=dropout)
-        self.v_ff = FeedForward(dim, int(dim * mlp_ratio), dropout=dropout)
 
-    def forward(self, q: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+# ---------------------------------------------------------
+# Bidirectional Fusion Layer
+# ---------------------------------------------------------
+
+class FusionLayer(tf.keras.layers.Layer):
+
+    def __init__(
+        self,
+        dim=768,
+        num_heads=12,
+        mlp_ratio=4.0,
+        dropout=0.0,
+    ):
+        super().__init__()
+
+        # LayerNorms
+        self.q_norm1 = layers.LayerNormalization(
+            epsilon=1e-6
+        )
+
+        self.v_norm1 = layers.LayerNormalization(
+            epsilon=1e-6
+        )
+
+        self.q_norm2 = layers.LayerNormalization(
+            epsilon=1e-6
+        )
+
+        self.v_norm2 = layers.LayerNormalization(
+            epsilon=1e-6
+        )
+
+        # Cross Attention
+        self.q_to_v = layers.MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=dim // num_heads,
+            dropout=dropout,
+        )
+
+        self.v_to_q = layers.MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=dim // num_heads,
+            dropout=dropout,
+        )
+
+        # Feed Forward Networks
+        self.q_ff = FeedForward(
+            dim=dim,
+            hidden_dim=int(dim * mlp_ratio),
+            dropout=dropout,
+        )
+
+        self.v_ff = FeedForward(
+            dim=dim,
+            hidden_dim=int(dim * mlp_ratio),
+            dropout=dropout,
+        )
+
+    def call(
+        self,
+        q,
+        v,
+        training=False,
+    ):
+        """
+        q : [B,Tq,D]
+        v : [B,Tv,D]
+
+        Returns
+        -------
+        q : [B,Tq,D]
+        v : [B,Tv,D]
+        """
+
+        # -----------------------------
+        # First LayerNorm
+        # -----------------------------
         q1 = self.q_norm1(q)
         v1 = self.v_norm1(v)
 
-        q2, _ = self.q_to_v(q1, v1, v1, need_weights=False)
-        v2, _ = self.v_to_q(v1, q1, q1, need_weights=False)
+        # -----------------------------
+        # Question attends to Vision
+        # -----------------------------
+        q2 = self.q_to_v(
+            query=q1,
+            key=v1,
+            value=v1,
+            training=training,
+        )
 
+        # -----------------------------
+        # Vision attends to Question
+        # -----------------------------
+        v2 = self.v_to_q(
+            query=v1,
+            key=q1,
+            value=q1,
+            training=training,
+        )
+
+        # -----------------------------
+        # Residual
+        # -----------------------------
         q = q + q2
         v = v + v2
 
+        # -----------------------------
+        # Second LayerNorm
+        # -----------------------------
         q3 = self.q_norm2(q)
         v3 = self.v_norm2(v)
 
-        q = q + self.q_ff(q3)
-        v = v + self.v_ff(v3)
+        # -----------------------------
+        # Feed Forward
+        # -----------------------------
+        q = q + self.q_ff(
+            q3,
+            training=training,
+        )
+
+        v = v + self.v_ff(
+            v3,
+            training=training,
+        )
 
         return q, v
+# ---------------------------------------------------------
+# Complete VQA Transformer Fusion Model
+# ---------------------------------------------------------
 
+class VQATransformerFusion(tf.keras.Model):
 
-class VQATransformerFusion(nn.Module):
     def __init__(
         self,
-        vocab_size: int,
-        ans_size: int,
-        image_size: int = 224,
-        patch_size: int = 16,
-        vision_dim: int = 768,
-        vision_depth: int = 14,
-        embed_dim: int = 384,
-        hidden_dim: int = 768,
-        num_heads: int = 12,
-        text_layers: int = 8,
-        fusion_layers: int = 4,
-        fusion_mlp_ratio: float = 4.0,
-        dropout: float = 0.0,
-        max_question_len: int = 24,
+        vocab_size,
+        ans_size,
+        image_size=224,
+        patch_size=16,
+        vision_dim=768,
+        vision_depth=14,
+        embed_dim=384,
+        hidden_dim=768,
+        num_heads=12,
+        text_layers=8,
+        fusion_layers=4,
+        fusion_mlp_ratio=4.0,
+        dropout=0.0,
+        max_question_len=24,
     ):
         super().__init__()
 
         self.max_question_len = max_question_len
 
+        # -------------------------------------------------
+        # Vision Encoder
+        # -------------------------------------------------
         self.vision = VisionTransformerEncoder(
             image_size=image_size,
             patch_size=patch_size,
@@ -197,6 +488,10 @@ class VQATransformerFusion(nn.Module):
             mlp_ratio=4.0,
             dropout=dropout,
         )
+
+        # -------------------------------------------------
+        # Text Encoder
+        # -------------------------------------------------
         self.text = TextTransformerEncoder(
             vocab_size=vocab_size,
             max_len=max_question_len,
@@ -208,67 +503,176 @@ class VQATransformerFusion(nn.Module):
             dropout=dropout,
         )
 
-        self.fusion_layers = nn.ModuleList(
-            [
-                FusionLayer(
-                    dim=hidden_dim,
-                    num_heads=num_heads,
-                    mlp_ratio=fusion_mlp_ratio,
-                    dropout=dropout,
-                )
-                for _ in range(fusion_layers)
-            ]
+        # -------------------------------------------------
+        # Fusion Blocks
+        # -------------------------------------------------
+        self.fusion_layers = [
+            FusionLayer(
+                dim=hidden_dim,
+                num_heads=num_heads,
+                mlp_ratio=fusion_mlp_ratio,
+                dropout=dropout,
+            )
+            for _ in range(fusion_layers)
+        ]
+
+        # -------------------------------------------------
+        # Pooling Head
+        # -------------------------------------------------
+        self.fusion_norm = layers.LayerNormalization(
+            epsilon=1e-6
         )
 
-        # Pooling/fusion heads
-        self.fusion_norm = nn.LayerNorm(hidden_dim * 6)
-        self.fusion_head = nn.Sequential(
-            nn.Linear(hidden_dim * 6, hidden_dim * 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-        )
+        self.fusion_head = tf.keras.Sequential([
+            layers.Dense(hidden_dim * 2),
+            layers.Activation(tf.nn.gelu),
+            layers.Dropout(dropout),
+            layers.Dense(hidden_dim),
+        ])
 
-        self.gate = nn.Sequential(nn.Linear(hidden_dim * 2, hidden_dim))
-        self.joint_proj = nn.Sequential(nn.Linear(hidden_dim * 2, hidden_dim))
+        # -------------------------------------------------
+        # Gating
+        # -------------------------------------------------
+        self.gate = layers.Dense(hidden_dim)
 
-        self.classifier = nn.Sequential(
-            nn.LayerNorm(hidden_dim),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, ans_size),
-        )
+        self.joint_proj = layers.Dense(hidden_dim)
 
-    @staticmethod
-    def _pool_tokens(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # x: [B, T, D]
+        # -------------------------------------------------
+        # Classifier
+        # -------------------------------------------------
+        self.classifier = tf.keras.Sequential([
+            layers.LayerNormalization(epsilon=1e-6),
+            layers.Dense(hidden_dim),
+            layers.Activation(tf.nn.gelu),
+            layers.Dropout(dropout),
+            layers.Dense(ans_size),
+        ])
+
+    # -----------------------------------------------------
+    # Token Pooling
+    # -----------------------------------------------------
+
+    def pool_tokens(self, x):
+        """
+        x : [B,T,D]
+
+        Returns
+        -------
+        cls
+        mean
+        max
+        """
+
         cls = x[:, 0]
+
         if x.shape[1] > 1:
             toks = x[:, 1:]
         else:
             toks = x
-        mean = toks.mean(dim=1)
-        maxv = toks.max(dim=1).values
-        return cls, mean, maxv
 
-    def forward(self, img: torch.Tensor, ques: torch.Tensor) -> torch.Tensor:
-        v = self.vision(img)  # [B, Tv, D]
-        q = self.text(ques)   # [B, Tq, D]
+        mean = tf.reduce_mean(
+            toks,
+            axis=1,
+        )
+
+        maximum = tf.reduce_max(
+            toks,
+            axis=1,
+        )
+
+        return cls, mean, maximum
+
+    # -----------------------------------------------------
+    # Forward
+    # -----------------------------------------------------
+
+    def call(
+        self,
+        image,
+        question,
+        training=False,
+    ):
+
+        # -----------------------------
+        # Encoders
+        # -----------------------------
+
+        v = self.vision(
+            image,
+            training=training,
+        )
+
+        q = self.text(
+            question,
+            training=training,
+        )
+
+        # -----------------------------
+        # Fusion
+        # -----------------------------
 
         for layer in self.fusion_layers:
-            q, v = layer(q, v)
+            q, v = layer(
+                q,
+                v,
+                training=training,
+            )
 
-        q_cls, q_mean, q_max = self._pool_tokens(q)
-        v_cls, v_mean, v_max = self._pool_tokens(v)
+        # -----------------------------
+        # Pool
+        # -----------------------------
 
-        stats = torch.cat([q_cls, v_cls, q_mean, v_mean, q_max, v_max], dim=-1)  # [B, 6D]
+        q_cls, q_mean, q_max = self.pool_tokens(q)
+
+        v_cls, v_mean, v_max = self.pool_tokens(v)
+
+        # -----------------------------
+        # Statistics Vector
+        # -----------------------------
+
+        stats = tf.concat([
+            q_cls,
+            v_cls,
+            q_mean,
+            v_mean,
+            q_max,
+            v_max,
+        ], axis=-1)
+
         stats = self.fusion_norm(stats)
-        fusion_vec = self.fusion_head(stats)  # [B, D]
 
-        pair = torch.cat([q_cls, v_cls], dim=-1)  # [B, 2D]
-        gate = torch.sigmoid(self.gate(pair))
+        fusion_vec = self.fusion_head(
+            stats,
+            training=training,
+        )
+
+        # -----------------------------
+        # Joint Pair
+        # -----------------------------
+
+        pair = tf.concat(
+            [
+                q_cls,
+                v_cls,
+            ],
+            axis=-1,
+        )
+
+        gate = tf.sigmoid(
+            self.gate(pair)
+        )
+
         joint = self.joint_proj(pair)
 
-        fused = gate * joint + (1.0 - gate) * fusion_vec
-        return self.classifier(fused)
+        fused = (
+            gate * joint
+            +
+            (1.0 - gate) * fusion_vec
+        )
+
+        logits = self.classifier(
+            fused,
+            training=training,
+        )
+
+        return logits

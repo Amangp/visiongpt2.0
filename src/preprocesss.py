@@ -1,56 +1,222 @@
-import json, re, os, pickle
+import json
+import re
+import os
+import pickle
 from collections import Counter
 
-def normalize_text(s):
-    s = s.lower().strip()
-    s = re.sub(r"[^a-z0-9\s]", "", s)
-    return s
 
-def load_data(questions_path, annotations_path):
-    with open(questions_path) as fq, open(annotations_path) as fa:
-        questions = json.load(fq)['questions']
-        annotations = json.load(fa)['annotations']
-    q_dict = {q['question_id']: q for q in questions}
+# ---------------------------------------------------------
+# Text Normalization
+# ---------------------------------------------------------
+
+def normalize_text(text):
+    """
+    Normalize question/answer text.
+
+    - lowercase
+    - remove punctuation
+    - remove leading/trailing spaces
+    """
+
+    text = text.lower().strip()
+    text = re.sub(r"[^a-z0-9\s]", "", text)
+
+    return text
+
+
+# ---------------------------------------------------------
+# Load COCO VQA Data
+# ---------------------------------------------------------
+
+def load_data(
+    questions_path,
+    annotations_path,
+):
+    """
+    Merge COCO question and annotation files.
+    """
+
+    with open(questions_path, "r") as fq:
+        questions = json.load(fq)["questions"]
+
+    with open(annotations_path, "r") as fa:
+        annotations = json.load(fa)["annotations"]
+
+    question_dict = {
+        q["question_id"]: q
+        for q in questions
+    }
+
     merged = []
+
     for ann in annotations:
-        q = q_dict.get(ann['question_id'])
-        if q:
-            merged.append({
-                "image_id": ann['image_id'],
-                "question": normalize_text(q['question']),
-                "answers": [normalize_text(a['answer']) for a in ann['answers']]
-            })
+
+        question = question_dict.get(
+            ann["question_id"]
+        )
+
+        if question is None:
+            continue
+
+        merged.append({
+
+            "image_id":
+                ann["image_id"],
+
+            "question":
+                normalize_text(
+                    question["question"]
+                ),
+
+            "answers":
+                [
+                    normalize_text(a["answer"])
+                    for a in ann["answers"]
+                ]
+        })
+
     return merged
 
-def build_vocab(data, min_word_count=3):
+
+# ---------------------------------------------------------
+# Build Question Vocabulary
+# ---------------------------------------------------------
+
+def build_vocab(
+    data,
+    min_word_count=3,
+):
+    """
+    Create word vocabulary from training questions.
+    """
+
     counter = Counter()
+
     for item in data:
-        counter.update(item['question'].split())
-    vocab = [w for w, c in counter.items() if c >= min_word_count]
-    word2idx = {w: i+1 for i, w in enumerate(vocab)}
-    word2idx['<pad>'] = 0
-    word2idx['<unk>'] = len(word2idx)
+        counter.update(
+            item["question"].split()
+        )
+
+    vocab = [
+
+        word
+
+        for word, count in counter.items()
+
+        if count >= min_word_count
+    ]
+
+    word2idx = {
+        word: idx + 1
+        for idx, word in enumerate(vocab)
+    }
+
+    word2idx["<pad>"] = 0
+    word2idx["<unk>"] = len(word2idx)
+
     return word2idx
 
-def build_answer_vocab(data, top_n=3000):
+
+# ---------------------------------------------------------
+# Build Answer Vocabulary
+# ---------------------------------------------------------
+
+def build_answer_vocab(
+    data,
+    top_n=3000,
+):
+    """
+    Create answer vocabulary using
+    the most frequent answers.
+    """
+
     counter = Counter()
+
     for item in data:
-        counter.update(item['answers'])
+        counter.update(
+            item["answers"]
+        )
+
     most_common = counter.most_common(top_n)
-    ans2idx = {a: i for i, (a, _) in enumerate(most_common)}
-    ans2idx['<unk>'] = len(ans2idx)
+
+    ans2idx = {
+
+        answer: idx
+
+        for idx, (answer, _)
+        in enumerate(most_common)
+
+    }
+
+    ans2idx["<unk>"] = len(ans2idx)
+
     return ans2idx
 
-if __name__ == "__main__":
+
+# ---------------------------------------------------------
+# Save Processed Files
+# ---------------------------------------------------------
+
+def preprocess():
+
     train_data = load_data(
+
         "data/questions/v2_OpenEnded_mscoco_train2014_questions.json",
-        "data/annotations/v2_mscoco_train2014_annotations.json"
+
+        "data/annotations/v2_mscoco_train2014_annotations.json",
+
     )
-    os.makedirs("data/processed", exist_ok=True)
-    with open("data/processed/train_data.pkl", "wb") as f:
-        pickle.dump(train_data, f)
+
+    os.makedirs(
+        "data/processed",
+        exist_ok=True,
+    )
+
+    # Save processed dataset
+    with open(
+        "data/processed/train_data.pkl",
+        "wb",
+    ) as f:
+
+        pickle.dump(
+            train_data,
+            f,
+        )
+
+    # Build vocabularies
     word2idx = build_vocab(train_data)
+
     ans2idx = build_answer_vocab(train_data)
-    pickle.dump(word2idx, open("data/processed/word2idx.pkl", "wb"))
-    pickle.dump(ans2idx, open("data/processed/ans2idx.pkl", "wb"))
+
+    # Save question vocabulary
+    with open(
+        "data/processed/word2idx.pkl",
+        "wb",
+    ) as f:
+
+        pickle.dump(
+            word2idx,
+            f,
+        )
+
+    # Save answer vocabulary
+    with open(
+        "data/processed/ans2idx.pkl",
+        "wb",
+    ) as f:
+
+        pickle.dump(
+            ans2idx,
+            f,
+        )
+
     print("✅ Preprocessing complete.")
+    print(f"Questions : {len(train_data)}")
+    print(f"Vocabulary Size : {len(word2idx)}")
+    print(f"Answer Classes : {len(ans2idx)}")
+
+
+# ---------------------------------------------------------
+
+if __name__ == "__main__":
+    preprocess()
