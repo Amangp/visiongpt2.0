@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Data / datasets (not required for inference demo)
+data/
+
+# Extra/alternate training folder (not required to run the demo)
+new model/
+
+# Large / private artifacts
+vqa_transformer_self.pth
+*_self.pkl
+
+# Docs/artifacts not required to run
+*.pdf
+
+# Misc
+*.log
