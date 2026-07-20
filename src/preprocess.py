@@ -3,7 +3,8 @@ import re
 import os
 import pickle
 from collections import Counter
-
+import tensorflow as tf
+from src.tfrecord_builder import create_tfrecords
 
 # ---------------------------------------------------------
 # Text Normalization
@@ -193,7 +194,27 @@ def preprocess():
         "wb",
     ) as f:
         pickle.dump(val_data, f)
+    
+    print("Creating TFRecords...")
 
+    create_tfrecords(
+        train_data,
+        image_dir="data/images/train2014",
+        output_dir="data/tfrecords/train",
+        word2idx=word2idx,
+        ans2idx=ans2idx,
+        max_len=20,
+    )
+
+    create_tfrecords(
+        val_data,
+        image_dir="data/images/val2014",
+        output_dir="data/tfrecords/val",
+        word2idx=word2idx,
+        ans2idx=ans2idx,
+        max_len=20,
+    )
+    print("\n✅ Preprocessing complete.")
     # -----------------------------------------------------
     # Build vocabularies ONLY from training data
     # -----------------------------------------------------

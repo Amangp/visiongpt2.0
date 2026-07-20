@@ -1,13 +1,21 @@
 data:
   train_questions: data/questions/v2_OpenEnded_mscoco_train2014_questions.json
   train_annotations: data/annotations/v2_mscoco_train2014_annotations.json
+
   val_questions: data/questions/v2_OpenEnded_mscoco_val2014_questions.json
   val_annotations: data/annotations/v2_mscoco_val2014_annotations.json
+
   image_dir: data/images/train2014/
   val_image_dir: data/images/val2014/
-  max_answers: 3000        # top 3000 answers recommended for Transformer
-  max_question_len: 20
 
+  tfrecord_train: data/tfrecords/train/*.tfrecord
+  tfrecord_val: data/tfrecords/val/*.tfrecord
+
+  train_samples: 100000
+  val_samples: 214354
+
+  max_answers: 3000
+  max_question_len: 20
 model:
   embed_dim: 256     # divisible by 8
   hidden_dim: 512

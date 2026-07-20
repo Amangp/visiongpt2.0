@@ -103,62 +103,46 @@ def train():
         ans2idx = pickle.load(f)
 
     # -----------------------------------------------------
-    # Image Transform (optional)
-    # -----------------------------------------------------
-    def transform(image):
-        image = tf.convert_to_tensor(image, dtype=tf.float32)
-        image = tf.image.resize(image, (224, 224))
-        image = tf.keras.applications.efficientnet.preprocess_input(image)
-        return image
-
-    # -----------------------------------------------------
     # Training Dataset
     # -----------------------------------------------------
 
     train_dataset = VQADataset(
-        "data/processed/train_data.pkl",
-        config["data"]["image_dir"],
+        config["data"]["tfrecord_train"],
         word2idx,
         ans2idx,
-        transform=transform,
-        max_samples=config["training"]["max_samples"],
-    )
-
-    train_loader = train_dataset.get_tf_dataset(
         batch_size=config["training"]["batch_size"],
         shuffle=True,
     )
+
+train_loader = train_dataset.get_tf_dataset()
 
     # -----------------------------------------------------
     # Validation Dataset
     # -----------------------------------------------------
 
     val_dataset = VQADataset(
-        "data/processed/val_data.pkl",
-        config["data"]["val_image_dir"],
+        config["data"]["tfrecord_val"],
         word2idx,
         ans2idx,
-        transform=transform,
-    )
-
-    val_loader = val_dataset.get_tf_dataset(
         batch_size=config["training"]["batch_size"],
         shuffle=False,
     )
 
+val_loader = val_dataset.get_tf_dataset()
+
     train_steps = math.ceil(
-        len(train_dataset)
+        config["training"]["max_samples"]
         / config["training"]["batch_size"]
     )
 
     val_steps = math.ceil(
-        len(val_dataset)
+        config["data"]["val_samples"]
         / config["training"]["batch_size"]
     )
 
     print("\n========== DATASET ==========")
-    print(f"Training Samples   : {len(train_dataset)}")
-    print(f"Validation Samples : {len(val_dataset)}")
+    print(f"Training Samples   : {config['data']['train_samples']}")
+    print(f"Validation Samples : {config['data']['val_samples']}")
     print(f"Batch Size         : {config['training']['batch_size']}")
     print(f"Train Steps        : {train_steps}")
     print(f"Validation Steps   : {val_steps}")
