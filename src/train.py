@@ -8,7 +8,8 @@ from src.model import VQATransformer
 from tensorflow.keras import mixed_precision
 
 tf.config.optimizer.set_jit(True)
-@tf.function
+mixed_precision.set_global_policy("mixed_float16")
+@tf.function(reduce_retracing=True)
 def train_step(
     model,
     images,
@@ -27,8 +28,6 @@ def train_step(
 
         loss = loss_fn(answers, logits)
 
-        tf.debugging.check_numerics(logits, "Logits contain NaN/Inf")
-        tf.debugging.check_numerics(loss, "Loss contains NaN/Inf")
 
     gradients = tape.gradient(
         loss,
@@ -50,7 +49,7 @@ def train_step(
     )
 
     return loss, correct
-@tf.function
+@tf.function(reduce_retracing=True)
 def val_step(
     model,
     images,
@@ -107,32 +106,38 @@ def train():
     # -----------------------------------------------------
 
     train_dataset = VQADataset(
-        config["data"]["tfrecord_train"],
-        word2idx,
-        ans2idx,
+        data_path=config["data"]["train_data"],
+        image_dir=config["data"]["image_dir"],
+        word2idx=word2idx,
+        ans2idx=ans2idx,
+        max_len=config["data"]["max_question_len"],
+        max_samples=config["data"].get("train_samples"),
+    )
+
+    train_loader = train_dataset.get_tf_dataset(
         batch_size=config["training"]["batch_size"],
         shuffle=True,
     )
-
-train_loader = train_dataset.get_tf_dataset()
-
+    train_steps = math.ceil(
+        config["data"]["train_samples"]
+        / config["training"]["batch_size"]
+    )
     # -----------------------------------------------------
     # Validation Dataset
     # -----------------------------------------------------
 
     val_dataset = VQADataset(
-        config["data"]["tfrecord_val"],
-        word2idx,
-        ans2idx,
-        batch_size=config["training"]["batch_size"],
-        shuffle=False,
+        data_path=config["data"]["val_data"],
+        image_dir=config["data"]["val_image_dir"],
+        word2idx=word2idx,
+        ans2idx=ans2idx,
+        max_len=config["data"]["max_question_len"],
+        max_samples=config["data"].get("val_samples"),
     )
 
-val_loader = val_dataset.get_tf_dataset()
-
-    train_steps = math.ceil(
-        config["training"]["max_samples"]
-        / config["training"]["batch_size"]
+    val_loader = val_dataset.get_tf_dataset(
+        batch_size=config["training"]["batch_size"],
+        shuffle=False,
     )
 
     val_steps = math.ceil(
@@ -159,7 +164,7 @@ val_loader = val_dataset.get_tf_dataset()
         num_heads=config["model"]["num_heads"],
     )
 
-    dummy_img = tf.random.normal((1, 224, 224, 3))
+    dummy_img = tf.zeros((1, 224, 224, 3), dtype=tf.float32)
     dummy_q = tf.zeros(
         (1, config["data"]["max_question_len"]),
         dtype=tf.int32,
@@ -177,12 +182,6 @@ val_loader = val_dataset.get_tf_dataset()
     # -----------------------------------------------------
     # Optimizer
     # -----------------------------------------------------
-    base_optimizer = tf.keras.optimizers.AdamW(
-        learning_rate=config["training"]["lr"]
-    )
-
-    optimizer = mixed_precision.LossScaleOptimizer(base_optimizer)
-
     scheduler = tf.keras.optimizers.schedules.ExponentialDecay(
         initial_learning_rate=config["training"]["lr"],
         decay_steps=train_steps,
@@ -190,6 +189,14 @@ val_loader = val_dataset.get_tf_dataset()
         staircase=False,
     )
 
+    base_optimizer = tf.keras.optimizers.AdamW(
+        learning_rate=scheduler,
+        clipnorm=1.0,
+    )
+
+    optimizer = mixed_precision.LossScaleOptimizer(
+        base_optimizer
+    )
     # -----------------------------------------------------
     # Training Loop
     # -----------------------------------------------------
@@ -209,10 +216,7 @@ val_loader = val_dataset.get_tf_dataset()
 
         for images, questions, answers in progress:
 
-            base_optimizer.learning_rate = scheduler(
-            optimizer.iterations
-            )
-
+            
             loss, batch_correct = train_step(
                 model,
                 images,
@@ -228,11 +232,16 @@ val_loader = val_dataset.get_tf_dataset()
 
             total += int(answers.shape[0])
 
-            progress.set_postfix(
-                loss=f"{total_loss / (progress.n + 1):.4f}",
-                acc=f"{100 * correct / total:.2f}%",
-                lr=f"{float(optimizer.learning_rate.numpy()):.2e}",
-            )
+            if progress.n % 20 == 0:
+                current_lr = float(
+                    scheduler(optimizer.iterations)
+                )
+
+                progress.set_postfix(
+                    loss=f"{total_loss/(progress.n+1):.4f}",
+                    acc=f"{100*correct/total:.2f}%",
+                    lr=f"{current_lr:.2e}",
+                )
 
         epoch_loss = total_loss / train_steps
         epoch_acc = 100.0 * correct / total

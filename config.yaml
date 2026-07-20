@@ -5,26 +5,27 @@ data:
   val_questions: data/questions/v2_OpenEnded_mscoco_val2014_questions.json
   val_annotations: data/annotations/v2_mscoco_val2014_annotations.json
 
+  train_data: data/processed/train_data.pkl
+  val_data: data/processed/val_data.pkl
+
   image_dir: data/images/train2014/
   val_image_dir: data/images/val2014/
-
-  tfrecord_train: data/tfrecords/train/*.tfrecord
-  tfrecord_val: data/tfrecords/val/*.tfrecord
 
   train_samples: 100000
   val_samples: 214354
 
   max_answers: 3000
   max_question_len: 20
+
 model:
-  embed_dim: 256     # divisible by 8
+  embed_dim: 384
   hidden_dim: 512
   attention_dim: 256
   num_heads: 8
-  n_layers: 2
+  n_layers: 4
 
 training:
-  batch_size: 24     # smaller batch to fit 8GB GPU
+  batch_size: 24
   lr: 0.0005
   lr_decay: 0.95
   epochs: 10

@@ -1,4 +1,5 @@
 import tensorflow as tf
+import os
 import pickle
 import numpy as np
 
@@ -7,94 +8,199 @@ class VQADataset:
 
     def __init__(
         self,
-        tfrecord_pattern,
+        data_path,
+        image_dir,
         word2idx,
         ans2idx,
-        batch_size=32,
-        shuffle=True,
+        transform=None,
+        max_len=20,
+        max_samples=None,
     ):
 
-        self.tfrecord_pattern = tfrecord_pattern
+        with open(data_path, "rb") as f:
+            self.data = pickle.load(f)
+
+        if max_samples is not None:
+            self.data = self.data[:max_samples]
+
+        self.image_dir = image_dir
+        self.split = os.path.basename(os.path.normpath(image_dir))
+
         self.word2idx = word2idx
         self.ans2idx = ans2idx
-        self.batch_size = batch_size
-        self.shuffle = shuffle
+        self.transform = transform
+        self.max_len = max_len
 
-    def parse_example(self, example):
+    def load_sample(
+        self,
+        image_path,
+        question,
+        answer,
+    ):
 
-        feature_description = {
+        image = tf.io.read_file(image_path)
 
-            "image": tf.io.FixedLenFeature([], tf.string),
-
-            "question": tf.io.FixedLenFeature([], tf.string),
-
-            "answer": tf.io.FixedLenFeature([], tf.int64),
-        }
-
-        example = tf.io.parse_single_example(
-            example,
-            feature_description,
+        image = tf.image.decode_jpeg(
+            image,
+            channels=3,
         )
 
-        image = tf.io.parse_tensor(
-            example["image"],
-            out_type=tf.float32,
+        image = tf.image.resize(
+            image,
+            (224, 224),
         )
 
-        image.set_shape((224, 224, 3))
-
-        question = tf.io.parse_tensor(
-            example["question"],
-            out_type=tf.int32,
+        image = tf.cast(
+            image,
+            tf.float32,
         )
 
-        question.set_shape((20,))
-
-        answer = tf.cast(
-            example["answer"],
-            tf.int32,
+        image = tf.keras.applications.efficientnet.preprocess_input(
+            image
         )
 
         return image, question, answer
 
-    def get_tf_dataset(self):
+    def encode_question(self, question):
 
-        files = tf.io.gfile.glob(
-            self.tfrecord_pattern
+        ids = [
+            self.word2idx.get(
+                word,
+                self.word2idx["<unk>"],
+            )
+            for word in question.split()
+        ]
+
+        if len(ids) < self.max_len:
+
+            ids += [
+                self.word2idx["<pad>"]
+            ] * (
+                self.max_len - len(ids)
+            )
+
+        else:
+
+            ids = ids[: self.max_len]
+
+        return np.array(
+            ids,
+            dtype=np.int32,
         )
 
-        dataset = tf.data.TFRecordDataset(
-            files,
-            num_parallel_reads=tf.data.AUTOTUNE,
+    def encode_answer(
+        self,
+        answers,
+    ):
+
+        counts = {}
+
+        for ans in answers:
+
+            idx = self.ans2idx.get(
+                ans,
+                self.ans2idx["<unk>"],
+            )
+
+            counts[idx] = counts.get(idx, 0) + 1
+
+        return np.int32(
+            max(
+                counts,
+                key=counts.get,
+            )
         )
 
-        dataset = dataset.map(
-            self.parse_example,
-            num_parallel_calls=tf.data.AUTOTUNE,
+    def __len__(self):
+
+        return len(self.data)
+
+    def get_tf_dataset(
+        self,
+        batch_size=32,
+        shuffle=True,
+    ):
+
+        image_paths = []
+
+        questions = []
+
+        answers = []
+
+        for item in self.data:
+
+            image_paths.append(
+
+                os.path.join(
+
+                    self.image_dir,
+
+                    f"COCO_{self.split}_{item['image_id']:012d}.jpg",
+                )
+            )
+
+            questions.append(
+                self.encode_question(
+                    item["question"]
+                )
+            )
+
+            answers.append(
+                self.encode_answer(
+                    item["answers"]
+                )
+            )
+
+        dataset = tf.data.Dataset.from_tensor_slices(
+
+            (
+
+                tf.constant(image_paths),
+
+                tf.constant(
+                    questions,
+                    dtype=tf.int32,
+                ),
+
+                tf.constant(
+                    answers,
+                    dtype=tf.int32,
+                ),
+            )
         )
 
-        if self.shuffle:
+        if shuffle:
 
             dataset = dataset.shuffle(
-                8192,
+
+                min(
+                    len(image_paths),
+                    20000,
+                ),
+
                 reshuffle_each_iteration=True,
             )
 
+        dataset = dataset.map(
+            self.load_sample,
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
+
         dataset = dataset.batch(
-            self.batch_size,
+            batch_size,
             drop_remainder=False,
         )
 
         dataset = dataset.prefetch(
-            tf.data.AUTOTUNE,
+            tf.data.AUTOTUNE
         )
 
         options = tf.data.Options()
 
         options.experimental_deterministic = False
+        options.experimental_optimization.parallel_batch = True
+        options.experimental_optimization.map_parallelization = True
 
-        dataset = dataset.with_options(
-            options
-        )
+        dataset = dataset.with_options(options)
 
         return dataset

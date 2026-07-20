@@ -30,7 +30,7 @@ class TransformerBlock(layers.Layer):
 
         self.dropout1 = layers.Dropout(dropout)
         self.dropout2 = layers.Dropout(dropout)
-
+    @tf.function(reduce_retracing=True)
     def call(self, x, training=False):
 
         attn = self.attention(
@@ -67,25 +67,32 @@ class VisionEncoder(tf.keras.Model):
             input_shape=(224,224,3)
         )
 
-        self.backbone.trainable = False
+        # Freeze all but the last 20 layers
+        for layer in self.backbone.layers[:-20]:
+            layer.trainable = False
+
+        # Unfreeze the last 20 layers
+        for layer in self.backbone.layers[-20:]:
+            layer.trainable = True
 
         self.proj = layers.Dense(hidden_dim)
-
+    @tf.function(reduce_retracing=True)
     def call(self, images, training=False):
 
-        images = tf.keras.applications.efficientnet.preprocess_input(images)
 
         features = self.backbone(
             images,
-            training=training
+            training=False
         )
 
         # (B,7,7,1280)
-        B = tf.shape(features)[0]
-
         features = tf.reshape(
             features,
-            (B,49,1280)
+            (
+                tf.shape(features)[0],
+                -1,
+                tf.shape(features)[-1],
+            )
         )
 
         features = self.proj(features)
@@ -133,7 +140,7 @@ class TextEncoder(tf.keras.Model):
         ]
 
         self.projection = layers.Dense(hidden_dim)
-
+    @tf.function(reduce_retracing=True)
     def call(
         self,
         questions,
@@ -142,11 +149,10 @@ class TextEncoder(tf.keras.Model):
 
         seq_len = tf.shape(questions)[1]
 
-        positions = tf.range(seq_len)
-        positions = self.position_embedding(positions)
+        positions = self.position_embedding(tf.range(seq_len))
+        positions = tf.expand_dims(positions, axis=0)
 
         x = self.embedding(questions)
-
         x = x + positions
 
         x = self.dropout(
@@ -191,7 +197,7 @@ class VQATransformer(tf.keras.Model):
 
         self.cross_attention = layers.MultiHeadAttention(
             num_heads=num_heads,
-            key_dim=hidden_dim
+            key_dim=hidden_dim // num_heads,
         )
 
         self.fc1 = layers.Dense(
@@ -201,8 +207,11 @@ class VQATransformer(tf.keras.Model):
 
         self.dropout = layers.Dropout(0.3)
 
-        self.fc2 = layers.Dense(ans_size)
-
+        self.fc2 = layers.Dense(
+            ans_size,
+            dtype="float32",
+        )
+    @tf.function(reduce_retracing=True)
     def call(self,
              images,
              questions,

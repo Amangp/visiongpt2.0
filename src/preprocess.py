@@ -3,8 +3,6 @@ import re
 import os
 import pickle
 from collections import Counter
-import tensorflow as tf
-from src.tfrecord_builder import create_tfrecords
 
 # ---------------------------------------------------------
 # Text Normalization
@@ -94,9 +92,8 @@ def build_vocab(
     counter = Counter()
 
     for item in data:
-        counter.update(
-            item["question"].split()
-        )
+        tokens = item["question"].split()
+        counter.update(tokens)
 
     vocab = [
 
@@ -187,34 +184,14 @@ def preprocess():
         "data/processed/train_data.pkl",
         "wb",
     ) as f:
-        pickle.dump(train_data, f)
+        pickle.dump(train_data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     with open(
         "data/processed/val_data.pkl",
         "wb",
     ) as f:
-        pickle.dump(val_data, f)
+        pickle.dump(val_data, f, protocol=pickle.HIGHEST_PROTOCOL)
     
-    print("Creating TFRecords...")
-
-    create_tfrecords(
-        train_data,
-        image_dir="data/images/train2014",
-        output_dir="data/tfrecords/train",
-        word2idx=word2idx,
-        ans2idx=ans2idx,
-        max_len=20,
-    )
-
-    create_tfrecords(
-        val_data,
-        image_dir="data/images/val2014",
-        output_dir="data/tfrecords/val",
-        word2idx=word2idx,
-        ans2idx=ans2idx,
-        max_len=20,
-    )
-    print("\n✅ Preprocessing complete.")
     # -----------------------------------------------------
     # Build vocabularies ONLY from training data
     # -----------------------------------------------------
@@ -227,13 +204,13 @@ def preprocess():
         "data/processed/word2idx.pkl",
         "wb",
     ) as f:
-        pickle.dump(word2idx, f)
+        pickle.dump(word2idx, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     with open(
         "data/processed/ans2idx.pkl",
         "wb",
     ) as f:
-        pickle.dump(ans2idx, f)
+        pickle.dump(ans2idx, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     print("\n✅ Preprocessing complete.")
     print(f"Training Questions   : {len(train_data)}")
