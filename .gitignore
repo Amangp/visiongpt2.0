@@ -1,33 +1,109 @@
+# ==========================
 # Python
+# ==========================
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 *.so
 *.egg-info/
-.pytest_cache/
+*.egg
+build/
+dist/
 
-# Virtual environments
+# ==========================
+# Virtual Environment
+# ==========================
 .venv/
 venv/
+env/
 ENV/
 
-# OS / editor
-.DS_Store
+# ==========================
+# VS Code
+# ==========================
 .vscode/
+.history/
 
-# Data / datasets (not required for inference demo)
-data/
+# ==========================
+# Jupyter
+# ==========================
+.ipynb_checkpoints/
 
-# Extra/alternate training folder (not required to run the demo)
-new model/
+# ==========================
+# Model Weights
+# ==========================
+*.h5
+*.keras
+*.ckpt
+*.pth
+*.pt
+*.onnx
 
-# Large / private artifacts
-vqa_transformer_self.pth
-*_self.pkl
+# ==========================
+# TensorBoard Logs
+# ==========================
+logs/
+events.out.tfevents*
 
-# Docs/artifacts not required to run
-*.pdf
+# ==========================
+# Cache
+# ==========================
+cache/
+data/cache/
+*.cache
 
-# Misc
-*.log
+# ==========================
+# Processed Data
+# ==========================
+data/processed/
+data/processed_images/
+*.npy
+*.npz
+*.tfrecord
+*.tfrecords
+
+# ==========================
+# Pickle Files
+# ==========================
+*.pkl
+
+# ==========================
+# Datasets
+# ==========================
+*.zip
+
+# Ignore extracted datasets
+data/images/
+data/questions/
+data/annotations/
+data/textvqa/
+data/visual_genome/
+
+# ==========================
+# Temporary Files
+# ==========================
+*.tmp
+*.temp
+
+# ==========================
+# OS Files
+# ==========================
+.DS_Store
+Thumbs.db
+
+# ==========================
+# Test Images
+# ==========================
+car.jpg
+dog.jpg
+
+# ==========================
+# Generated JSON
+# ==========================
+image_data.json
+
+# ==========================
+# Batch Files
+# ==========================
+*.bat

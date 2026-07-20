@@ -1,79 +1,99 @@
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
-import tensorflow_hub as hub
-
-# ---------------------------------------------------------
-# Vision Encoder
-# ---------------------------------------------------------
-
-class VisionEncoder(tf.keras.Model):
-
-    def __init__(self, out_dim=512):
-        super().__init__()
-
-        # ViT-B16 feature extractor
-        self.vit = hub.KerasLayer(
-            "https://tfhub.dev/sayakpaul/vit_b16_fe/1",
-            trainable=False
-        )
-
-        self.proj = layers.Dense(out_dim)
-
-    def call(self, images):
-
-        # shape -> [B,197,768]
-        features = self.vit(images)
-
-        features = self.proj(features)
-
-        return features
 
 
-# ---------------------------------------------------------
-# Text Encoder
-# ---------------------------------------------------------
 
 class TransformerBlock(layers.Layer):
 
-    def __init__(self,
-                 embed_dim,
-                 num_heads,
-                 ff_dim,
-                 rate=0.1):
-
+    def __init__(
+        self,
+        embed_dim,
+        num_heads,
+        ff_dim,
+        dropout=0.1
+    ):
         super().__init__()
 
-        self.att = layers.MultiHeadAttention(
+        self.attention = layers.MultiHeadAttention(
             num_heads=num_heads,
-            key_dim=embed_dim
+            key_dim=embed_dim // num_heads
         )
 
         self.ffn = keras.Sequential([
-            layers.Dense(ff_dim, activation="relu"),
+            layers.Dense(ff_dim, activation="gelu"),
             layers.Dense(embed_dim)
         ])
 
         self.norm1 = layers.LayerNormalization(epsilon=1e-6)
         self.norm2 = layers.LayerNormalization(epsilon=1e-6)
 
-        self.drop1 = layers.Dropout(rate)
-        self.drop2 = layers.Dropout(rate)
+        self.dropout1 = layers.Dropout(dropout)
+        self.dropout2 = layers.Dropout(dropout)
 
     def call(self, x, training=False):
 
-        attn = self.att(x, x)
+        attn = self.attention(
+            query=x,
+            key=x,
+            value=x,
+            training=training
+        )
 
-        attn = self.drop1(attn, training=training)
+        attn = self.dropout1(
+            attn,
+            training=training
+        )
 
         x = self.norm1(x + attn)
 
         ffn = self.ffn(x)
 
-        ffn = self.drop2(ffn, training=training)
+        ffn = self.dropout2(
+            ffn,
+            training=training
+        )
 
-        return self.norm2(x + ffn)
+        return self.norm2(x + ffn) 
 
+class VisionEncoder(tf.keras.Model):
+
+    def __init__(self, hidden_dim=512):
+        super().__init__()
+
+        self.backbone = tf.keras.applications.EfficientNetB0(
+            include_top=False,
+            weights="imagenet",
+            input_shape=(224,224,3)
+        )
+
+        self.backbone.trainable = False
+
+        self.proj = layers.Dense(hidden_dim)
+
+    def call(self, images, training=False):
+
+        images = tf.keras.applications.efficientnet.preprocess_input(images)
+
+        features = self.backbone(
+            images,
+            training=training
+        )
+
+        # (B,7,7,1280)
+        B = tf.shape(features)[0]
+
+        features = tf.reshape(
+            features,
+            (B,49,1280)
+        )
+
+        features = self.proj(features)
+
+        return features
+# ---------------------------------------------------------
+# Text Encoder
+# ---------------------------------------------------------
 
 class TextEncoder(tf.keras.Model):
 
@@ -82,8 +102,10 @@ class TextEncoder(tf.keras.Model):
         vocab_size,
         embed_dim=300,
         hidden_dim=512,
-        n_heads=4,
-        n_layers=2
+        n_heads=8,
+        n_layers=2,
+        max_len=50,
+        dropout=0.1
     ):
 
         super().__init__()
@@ -93,29 +115,54 @@ class TextEncoder(tf.keras.Model):
             embed_dim
         )
 
+        self.position_embedding = layers.Embedding(
+            input_dim=max_len,
+            output_dim=embed_dim
+        )
+
+        self.dropout = layers.Dropout(dropout)
+
         self.blocks = [
             TransformerBlock(
-                embed_dim,
-                n_heads,
-                hidden_dim
+                embed_dim=embed_dim,
+                num_heads=n_heads,
+                ff_dim=hidden_dim,
+                dropout=dropout
             )
             for _ in range(n_layers)
         ]
 
-        self.proj = layers.Dense(hidden_dim)
+        self.projection = layers.Dense(hidden_dim)
 
-    def call(self, question, training=False):
+    def call(
+        self,
+        questions,
+        training=False
+    ):
 
-        x = self.embedding(question)
+        seq_len = tf.shape(questions)[1]
+
+        positions = tf.range(seq_len)
+        positions = self.position_embedding(positions)
+
+        x = self.embedding(questions)
+
+        x = x + positions
+
+        x = self.dropout(
+            x,
+            training=training
+        )
 
         for block in self.blocks:
-            x = block(x, training)
+            x = block(
+                x,
+                training=training
+            )
 
-        x = tf.reduce_mean(x, axis=1)
+        x = self.projection(x)
 
-        return self.proj(x)
-
-
+        return x
 # ---------------------------------------------------------
 # VQA Transformer
 # ---------------------------------------------------------
@@ -161,25 +208,25 @@ class VQATransformer(tf.keras.Model):
              questions,
              training=False):
 
-        image_features = self.vision(images)
+        image_features = self.vision(
+            images,
+            training=training
+        )
 
         question_features = self.text(
             questions,
-            training
-        )
-
-        question_features = tf.expand_dims(
-            question_features,
-            axis=1
+            training=training
         )
 
         attended = self.cross_attention(
             query=question_features,
             key=image_features,
-            value=image_features
+            value=image_features,
+            training=training
         )
 
-        fused = tf.squeeze(attended, axis=1)
+        # Pool over question tokens
+        fused = tf.reduce_mean(attended, axis=1)
 
         fused = self.fc1(fused)
 

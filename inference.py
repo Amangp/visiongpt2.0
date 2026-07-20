@@ -5,7 +5,6 @@ import pickle
 from PIL import Image
 
 from src.model import VQATransformer
-from src.model_fusion import VQATransformerFusion
 from src.preprocess import normalize_text
 
 
@@ -16,12 +15,11 @@ class VQAInference:
         model_path,
         word2idx_path,
         ans2idx_path,
-        model_type="fusion",
     ):
 
-        # -------------------------------------------------
+        # -----------------------------
         # Load vocabularies
-        # -------------------------------------------------
+        # -----------------------------
 
         with open(word2idx_path, "rb") as f:
             self.word2idx = pickle.load(f)
@@ -30,214 +28,127 @@ class VQAInference:
             self.ans2idx = pickle.load(f)
 
         self.idx2ans = {
-            v: k
-            for k, v in self.ans2idx.items()
+            v: k for k, v in self.ans2idx.items()
         }
 
-        vocab_size = len(self.word2idx)
-        ans_size = len(self.ans2idx)
+        print(f"Vocabulary Size : {len(self.word2idx)}")
+        print(f"Answer Classes  : {len(self.ans2idx)}")
 
-        print(f"📊 Vocabulary Size : {vocab_size}")
-        print(f"📊 Answer Classes  : {ans_size}")
+        self.max_question_len = 20
 
-        # -------------------------------------------------
+        # -----------------------------
         # Create Model
-        # -------------------------------------------------
+        # -----------------------------
 
-        if model_type.lower() == "fusion":
-
-            self.max_question_len = 24
-
-            self.model = VQATransformerFusion(
-                vocab_size=vocab_size,
-                ans_size=ans_size,
-                image_size=224,
-                patch_size=16,
-                vision_dim=768,
-                vision_depth=14,
-                embed_dim=384,
-                hidden_dim=768,
-                num_heads=12,
-                text_layers=8,
-                fusion_layers=4,
-                fusion_mlp_ratio=4.0,
-                dropout=0.0,
-                max_question_len=self.max_question_len,
-            )
-
-        else:
-
-            self.max_question_len = 20
-
-            self.model = VQATransformer(
-                vocab_size=vocab_size,
-                ans_size=ans_size,
-                embed_dim=256,
-                hidden_dim=512,
-                num_heads=8,
-            )
-
-        # -------------------------------------------------
-        # Build Model
-        # -------------------------------------------------
-
-        dummy_image = tf.random.normal(
-            (
-                1,
-                224,
-                224,
-                3,
-            )
+        self.model = VQATransformer(
+            vocab_size=len(self.word2idx),
+            ans_size=len(self.ans2idx),
+            embed_dim=256,
+            hidden_dim=512,
+            num_heads=8,
         )
 
+        # -----------------------------
+        # Build model
+        # -----------------------------
+
+        dummy_image = tf.random.normal((1, 224, 224, 3))
         dummy_question = tf.zeros(
-            (
-                1,
-                self.max_question_len,
-            ),
+            (1, self.max_question_len),
             dtype=tf.int32,
         )
 
-        _ = self.model(
+        self.model(
             dummy_image,
             dummy_question,
             training=False,
         )
 
-        # -------------------------------------------------
-        # Load TensorFlow Weights
-        # -------------------------------------------------
+        # -----------------------------
+        # Load weights
+        # -----------------------------
 
         self.model.load_weights(model_path)
 
-        print("✅ TensorFlow model loaded successfully.")
+        print("Model loaded successfully!")
 
-        # -------------------------------------------------
-        # ImageNet normalization
-        # -------------------------------------------------
-
-        self.mean = tf.constant(
-            [0.485, 0.456, 0.406],
-            dtype=tf.float32,
-        )
-
-        self.std = tf.constant(
-            [0.229, 0.224, 0.225],
-            dtype=tf.float32,
-        )
-    # -------------------------------------------------
-    # Image Preprocessing
-    # -------------------------------------------------
+    # ----------------------------------------------------
+    # Image preprocessing
+    # ----------------------------------------------------
 
     def preprocess_image(self, image):
-        """
-        Convert a PIL image into a TensorFlow tensor.
 
-        Input:
-            PIL.Image or image path
-
-        Output:
-            Tensor of shape [1, 224, 224, 3]
-        """
-
-        # Load image if a path is provided
         if isinstance(image, str):
-            image = Image.open(image)
 
-        # Ensure RGB
-        if image.mode != "RGB":
-            image = image.convert("RGB")
+            image = tf.io.read_file(image)
+            image = tf.image.decode_jpeg(
+                image,
+                channels=3,
+            )
 
-        # Resize
-        image = image.resize((224, 224))
+        else:
 
-        # PIL -> NumPy
-        image = np.array(image).astype(np.float32)
+            image = np.array(image)
+            image = tf.convert_to_tensor(image)
 
-        # Scale to [0,1]
-        image /= 255.0
-
-        # Normalize using ImageNet statistics
-        image = (image - self.mean.numpy()) / self.std.numpy()
-
-        # NumPy -> Tensor
-        image = tf.convert_to_tensor(
+        image = tf.image.convert_image_dtype(
             image,
-            dtype=tf.float32,
+            tf.float32,
         )
 
-        # Add batch dimension
+        image = tf.image.resize(
+            image,
+            (224, 224),
+        )
+
+        image = tf.keras.applications.efficientnet.preprocess_input(
+            image * 255.0
+        )
+
         image = tf.expand_dims(
             image,
             axis=0,
         )
 
         return image
-    # -------------------------------------------------
-    # Question Preprocessing
-    # -------------------------------------------------
 
-    def preprocess_question(
-        self,
-        question,
-        max_len=None,
-    ):
-        """
-        Convert a natural language question into a TensorFlow tensor.
+    # ----------------------------------------------------
+    # Question preprocessing
+    # ----------------------------------------------------
 
-        Input:
-            "What color is the car?"
+    def preprocess_question(self, question):
 
-        Output:
-            Tensor of shape [1, max_len]
-        """
-
-        if max_len is None:
-            max_len = self.max_question_len
-
-        # Normalize question
         question = normalize_text(question)
 
-        # Split into words
         words = question.split()
 
-        # Truncate
-        words = words[:max_len]
+        words = words[:self.max_question_len]
 
-        # Convert words to indices
         indices = [
+
             self.word2idx.get(
-                word,
+                w,
                 self.word2idx["<unk>"],
             )
-            for word in words
+
+            for w in words
         ]
 
-        # Pad if necessary
-        if len(indices) < max_len:
-            indices.extend(
-                [
-                    self.word2idx["<pad>"]
-                ]
-                * (max_len - len(indices))
+        while len(indices) < self.max_question_len:
+            indices.append(
+                self.word2idx["<pad>"]
             )
 
-        # Convert to Tensor
-        question_tensor = tf.convert_to_tensor(
-            indices,
+        question = tf.convert_to_tensor(
+            [indices],
             dtype=tf.int32,
         )
 
-        # Add batch dimension
-        question_tensor = tf.expand_dims(
-            question_tensor,
-            axis=0,
-        )
+        return question
 
-        return question_tensor
-    # -------------------------------------------------
+    # ----------------------------------------------------
     # Prediction
-    # -------------------------------------------------
+    # ----------------------------------------------------
 
     def predict(
         self,
@@ -245,84 +156,37 @@ class VQAInference:
         question,
         top_k=5,
     ):
-        """
-        Predict answers for an image-question pair.
 
-        Args:
-            image : PIL Image or image path
-            question : str
-            top_k : number of predictions
+        image = self.preprocess_image(image)
 
-        Returns:
-            List[(answer, confidence)]
-        """
-
-        # -----------------------------
-        # Preprocess
-        # -----------------------------
-
-        image_tensor = self.preprocess_image(image)
-
-        question_tensor = self.preprocess_question(question)
-
-        # -----------------------------
-        # Forward Pass
-        # -----------------------------
+        question = self.preprocess_question(question)
 
         logits = self.model(
-            image_tensor,
-            question_tensor,
+            image,
+            question,
             training=False,
         )
-
-        # -----------------------------
-        # Softmax
-        # -----------------------------
 
         probs = tf.nn.softmax(
             logits,
             axis=-1,
-        )
-
-        probs = tf.squeeze(
-            probs,
-            axis=0,
-        )
-
-        # -----------------------------
-        # Top-K
-        # -----------------------------
-
-        top_k = min(
-            top_k,
-            probs.shape[0],
-        )
+        )[0]
 
         values, indices = tf.math.top_k(
             probs,
             k=top_k,
-            sorted=True,
         )
-
-        values = values.numpy()
-        indices = indices.numpy()
-
-        # -----------------------------
-        # Decode Answers
-        # -----------------------------
 
         predictions = []
 
-        for score, idx in zip(values, indices):
-
-            answer = self.idx2ans.get(
-                int(idx),
-                "<unk>",
-            )
+        for score, idx in zip(
+            values.numpy(),
+            indices.numpy(),
+        ):
 
             predictions.append(
                 (
-                    answer,
+                    self.idx2ans[int(idx)],
                     float(score),
                 )
             )
@@ -330,38 +194,48 @@ class VQAInference:
         return predictions
 
 
-# ---------------------------------------------------------
-# Example
-# ---------------------------------------------------------
+# ----------------------------------------------------
+# Interactive Testing
+# ----------------------------------------------------
 
 if __name__ == "__main__":
 
     vqa = VQAInference(
 
-        model_path="vqa_transformer.keras",
+        model_path="vqa_transformer.weights.h5",
 
-        word2idx_path="word2idx.pkl",
+        word2idx_path="data/processed/word2idx.pkl",
 
-        ans2idx_path="ans2idx.pkl",
-
-        model_type="fusion",
+        ans2idx_path="data/processed/ans2idx.pkl",
 
     )
 
-    # Example usage
+    while True:
 
-    # image = "sample.jpg"
-    # question = "What color is the car?"
+        print("\n" + "=" * 60)
 
-    # predictions = vqa.predict(
-    #     image,
-    #     question,
-    # )
+        image = input("Image Path (q to quit): ")
 
-    # print(question)
+        if image.lower() == "q":
+            break
 
-    # for answer, confidence in predictions:
-    #     print(
-    #         answer,
-    #         f"{confidence:.2%}"
-    #     )
+        question = input("Question: ")
+
+        predictions = vqa.predict(
+            image,
+            question,
+            top_k=5,
+        )
+
+        print("\nTop Predictions\n")
+
+        for i, (answer, confidence) in enumerate(
+            predictions,
+            start=1,
+        ):
+
+            print(
+                f"{i}. {answer:<20} {confidence:.2%}"
+            )
+
+        print("=" * 60)

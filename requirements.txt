@@ -1,6 +1,7 @@
-torch
-torchvision
-tqdm
-pyyaml
+tensorflow>=2.16
+numpy>=1.26
 Pillow
 gradio
+pyyaml
+tqdm
+matplotlib

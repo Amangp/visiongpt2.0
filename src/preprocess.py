@@ -159,12 +159,18 @@ def build_answer_vocab(
 
 def preprocess():
 
+    print("Loading training dataset...")
+
     train_data = load_data(
-
         "data/questions/v2_OpenEnded_mscoco_train2014_questions.json",
-
         "data/annotations/v2_mscoco_train2014_annotations.json",
+    )
 
+    print("Loading validation dataset...")
+
+    val_data = load_data(
+        "data/questions/v2_OpenEnded_mscoco_val2014_questions.json",
+        "data/annotations/v2_mscoco_val2014_annotations.json",
     )
 
     os.makedirs(
@@ -172,50 +178,47 @@ def preprocess():
         exist_ok=True,
     )
 
-    # Save processed dataset
+    # -----------------------------------------------------
+    # Save processed datasets
+    # -----------------------------------------------------
+
     with open(
         "data/processed/train_data.pkl",
         "wb",
     ) as f:
+        pickle.dump(train_data, f)
 
-        pickle.dump(
-            train_data,
-            f,
-        )
+    with open(
+        "data/processed/val_data.pkl",
+        "wb",
+    ) as f:
+        pickle.dump(val_data, f)
 
-    # Build vocabularies
+    # -----------------------------------------------------
+    # Build vocabularies ONLY from training data
+    # -----------------------------------------------------
+
     word2idx = build_vocab(train_data)
 
     ans2idx = build_answer_vocab(train_data)
 
-    # Save question vocabulary
     with open(
         "data/processed/word2idx.pkl",
         "wb",
     ) as f:
+        pickle.dump(word2idx, f)
 
-        pickle.dump(
-            word2idx,
-            f,
-        )
-
-    # Save answer vocabulary
     with open(
         "data/processed/ans2idx.pkl",
         "wb",
     ) as f:
+        pickle.dump(ans2idx, f)
 
-        pickle.dump(
-            ans2idx,
-            f,
-        )
-
-    print("✅ Preprocessing complete.")
-    print(f"Questions : {len(train_data)}")
-    print(f"Vocabulary Size : {len(word2idx)}")
-    print(f"Answer Classes : {len(ans2idx)}")
-
-
+    print("\n✅ Preprocessing complete.")
+    print(f"Training Questions   : {len(train_data)}")
+    print(f"Validation Questions : {len(val_data)}")
+    print(f"Vocabulary Size      : {len(word2idx)}")
+    print(f"Answer Classes       : {len(ans2idx)}")
 # ---------------------------------------------------------
 
 if __name__ == "__main__":
