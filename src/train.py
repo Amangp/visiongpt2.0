@@ -303,6 +303,28 @@ def train():
 
     model.save_weights("vqa_transformer.weights.h5")
     print("\n✅ Model saved as vqa_transformer.weights.h5")
-    
+    print("\n===== VERIFYING SAVED CHECKPOINT =====")
+
+    test_model = VQATransformer(
+        vocab_size=len(word2idx),
+        ans_size=len(ans2idx),
+        embed_dim=config["model"]["embed_dim"],
+        hidden_dim=config["model"]["hidden_dim"],
+        num_heads=config["model"]["num_heads"],
+        n_layers=config["model"]["n_layers"],
+    )
+
+    dummy_img = tf.random.normal((1, 224, 224, 3))
+    dummy_q = tf.zeros((1, 20), dtype=tf.int32)
+
+    test_model(dummy_img, dummy_q)
+
+    test_model.load_weights("best_model.weights.h5")
+
+    logits = test_model(dummy_img, dummy_q, training=False)
+
+    print("Checkpoint verified.")
+    print("Max logit:", tf.reduce_max(logits).numpy())
+    print("Min logit:", tf.reduce_min(logits).numpy())
 if __name__ == "__main__":
     train()

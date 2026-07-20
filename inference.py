@@ -73,21 +73,21 @@ class VQAInference:
         # -----------------------------
 
         try:
-            self.model.load_weights(model_path)
-            print("Loaded successfully")
-            total = 0
-            for w in self.model.trainable_variables:
-                total += tf.reduce_sum(tf.abs(w)).numpy()
+            status = self.model.load_weights(model_path)
 
-            print(f"Total weight magnitude: {total:.2f}")
+            print("Weights loaded.")
+
+            try:
+                status.assert_existing_objects_matched()
+                status.assert_consumed()
+                print("Checkpoint fully restored.")
+            except Exception as e:
+                print("Checkpoint mismatch:")
+                print(e)
+
         except Exception as e:
+            print("Load failed:")
             print(e)
-
-            print("\n========================")
-            for layer in self.model.layers:
-                print(layer.name, type(layer))
-
-        print("Model loaded successfully!")
 
     # ----------------------------------------------------
     # Image preprocessing
@@ -207,7 +207,8 @@ class VQAInference:
                     float(score),
                 )
             )
-
+        print("Max Logit :", tf.reduce_max(logits).numpy())
+        print("Min Logit :", tf.reduce_min(logits).numpy())
         return predictions
 
 
