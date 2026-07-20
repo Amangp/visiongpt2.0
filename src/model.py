@@ -181,7 +181,8 @@ class VQATransformer(tf.keras.Model):
         ans_size,
         embed_dim=300,
         hidden_dim=512,
-        num_heads=4
+        num_heads=4,
+        n_layers=2,
     ):
 
         super().__init__()
@@ -192,7 +193,8 @@ class VQATransformer(tf.keras.Model):
             vocab_size,
             embed_dim,
             hidden_dim,
-            num_heads
+            num_heads,
+            n_layers=n_layers,
         )
 
         self.cross_attention = layers.MultiHeadAttention(

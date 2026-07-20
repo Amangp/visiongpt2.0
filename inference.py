@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import pickle
-
+import yaml
 from PIL import Image
 
 from src.model import VQATransformer
@@ -35,7 +35,10 @@ class VQAInference:
         print(f"Answer Classes  : {len(self.ans2idx)}")
 
         self.max_question_len = 20
+        with open("config.yaml", "r") as f:
+            config = yaml.safe_load(f)
 
+        model_cfg = config["model"]
         # -----------------------------
         # Create Model
         # -----------------------------
@@ -43,9 +46,10 @@ class VQAInference:
         self.model = VQATransformer(
             vocab_size=len(self.word2idx),
             ans_size=len(self.ans2idx),
-            embed_dim=256,
-            hidden_dim=512,
-            num_heads=8,
+            embed_dim=model_cfg["embed_dim"],
+            hidden_dim=model_cfg["hidden_dim"],
+            num_heads=model_cfg["num_heads"],
+            n_layers=model_cfg["n_layers"],
         )
 
         # -----------------------------
@@ -68,7 +72,20 @@ class VQAInference:
         # Load weights
         # -----------------------------
 
-        self.model.load_weights(model_path)
+        try:
+            self.model.load_weights(model_path)
+            print("Loaded successfully")
+            total = 0
+            for w in self.model.trainable_variables:
+                total += tf.reduce_sum(tf.abs(w)).numpy()
+
+            print(f"Total weight magnitude: {total:.2f}")
+        except Exception as e:
+            print(e)
+
+            print("\n========================")
+            for layer in self.model.layers:
+                print(layer.name, type(layer))
 
         print("Model loaded successfully!")
 
@@ -202,7 +219,7 @@ if __name__ == "__main__":
 
     vqa = VQAInference(
 
-        model_path="vqa_transformer.weights.h5",
+        model_path="best_model.weights.h5",
 
         word2idx_path="data/processed/word2idx.pkl",
 

@@ -10,20 +10,22 @@ print("🚀 Loading TensorFlow VQA model...")
 
 MODEL_PATH = os.environ.get(
     "VQA_MODEL_PATH",
-    "vqa_transformer.keras",
+    "vqa_transformer.weights.h5",
 )
 
 WORD2IDX_PATH = os.environ.get(
     "VQA_WORD2IDX_PATH",
-    "word2idx.pkl",
+    "data/processed/word2idx.pkl",
 )
 
 ANS2IDX_PATH = os.environ.get(
     "VQA_ANS2IDX_PATH",
-    "ans2idx.pkl",
+    "data/processed/ans2idx.pkl",
 )
 
-print(f"📦 Using model checkpoint: {MODEL_PATH}")
+print(f"📦 Model checkpoint : {MODEL_PATH}")
+print(f"📚 Vocabulary       : {WORD2IDX_PATH}")
+print(f"🏷️ Answer mapping   : {ANS2IDX_PATH}")
 
 vqa_model = VQAInference(
     model_path=MODEL_PATH,
@@ -38,69 +40,49 @@ vqa_model = VQAInference(
 def answer_question(image, question):
 
     if image is None:
-        return "⚠️ Please upload an image first!"
+        return "⚠️ Please upload an image."
 
-    if question is None or question.strip() == "":
-        return "⚠️ Please enter a question!"
+    if not question or question.strip() == "":
+        return "⚠️ Please enter a question."
 
     try:
 
         predictions = vqa_model.predict(
-            image,
-            question,
+            image=image,
+            question=question,
             top_k=5,
         )
 
-        output = (
-            f"**Question:** {question}\n\n"
-            "**Top Predictions:**\n\n"
-        )
+        output = f"## Question\n{question}\n\n"
+        output += "## Top Predictions\n\n"
 
-        for i, (answer, confidence) in enumerate(
-            predictions,
-            start=1,
-        ):
+        for i, (answer, confidence) in enumerate(predictions, start=1):
 
             confidence *= 100
 
-            bar = "█" * int(confidence / 5)
-
             output += (
-                f"{i}. **{answer}** - "
-                f"{confidence:.2f}%\n"
+                f"**{i}. {answer}** "
+                f"({confidence:.2f}%)\n\n"
             )
-
-            output += f"{bar}\n\n"
 
         return output
 
     except Exception as e:
-
-        return f"❌ Error: {str(e)}"
-
+        return f"❌ {e}"
 
 # ---------------------------------------------------------
 # Example Questions
 # ---------------------------------------------------------
 
 example_questions = [
-
     "What color is the object?",
-
     "How many people are in the image?",
-
     "What is the person doing?",
-
     "What animal is shown?",
-
     "What is the weather like?",
-
     "Is this indoors or outdoors?",
-
     "What room is this?",
-
     "What sport is being played?",
-
 ]
 
 # ---------------------------------------------------------
@@ -108,17 +90,17 @@ example_questions = [
 # ---------------------------------------------------------
 
 with gr.Blocks(
-    title="Visual Question Answering",
+    title="TensorFlow Visual Question Answering",
     theme=gr.themes.Soft(),
 ) as demo:
 
     gr.Markdown(
         """
-# 🖼️ Visual Question Answering System
+# 🖼️ Visual Question Answering
 
-Upload an image and ask a question.
+Upload an image and ask a question about it.
 
-The TensorFlow VQA model will analyze the image and answer your question.
+The model is trained on the **VQA v2** dataset.
 """
     )
 
@@ -134,47 +116,43 @@ The TensorFlow VQA model will analyze the image and answer your question.
 
             question_input = gr.Textbox(
                 label="Question",
+                placeholder="Ask anything about the image...",
                 lines=2,
-                placeholder="Ask anything...",
             )
 
-            gr.Markdown(
-                "**💡 Example Questions**"
-            )
+            gr.Markdown("### Example Questions")
 
             gr.Examples(
                 examples=[[q] for q in example_questions],
                 inputs=question_input,
             )
 
-            submit = gr.Button(
-                "🔍 Get Answer",
+            submit_btn = gr.Button(
+                "🔍 Predict",
                 variant="primary",
             )
 
-            clear = gr.Button(
-                "🗑️ Clear",
-            )
+            clear_btn = gr.Button("🗑️ Clear")
 
         with gr.Column(scale=1):
 
             output = gr.Markdown(
-                value="Upload an image and ask a question."
+                "Upload an image and ask a question."
             )
 
-    submit.click(
-        answer_question,
-        [image_input, question_input],
-        output,
+    submit_btn.click(
+        fn=answer_question,
+        inputs=[image_input, question_input],
+        outputs=output,
     )
 
     question_input.submit(
-        answer_question,
-        [image_input, question_input],
-        output,
+        fn=answer_question,
+        inputs=[image_input, question_input],
+        outputs=output,
     )
 
-    clear.click(
+    clear_btn.click(
         lambda: (
             None,
             "",
@@ -191,16 +169,15 @@ The TensorFlow VQA model will analyze the image and answer your question.
         """
 ---
 
-Model trained on **VQA v2.0**
+### Recommended Questions
 
-Recommended:
-
-- Clear images
-- Natural-language questions
-- Questions about objects, colors, numbers, actions and scenes
+- What color is the object?
+- How many people are there?
+- What is the person doing?
+- What animal is shown?
+- Is it indoors or outdoors?
 """
     )
-
 
 # ---------------------------------------------------------
 # Launch

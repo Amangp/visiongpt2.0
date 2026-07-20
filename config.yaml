@@ -11,7 +11,7 @@ data:
   image_dir: data/images/train2014/
   val_image_dir: data/images/val2014/
 
-  train_samples: 100000
+  train_samples: 10000
   val_samples: 214354
 
   max_answers: 3000
@@ -30,4 +30,4 @@ training:
   lr_decay: 0.95
   epochs: 10
   optimizer: adamw
-  max_samples: 100000
+  max_samples: 10000

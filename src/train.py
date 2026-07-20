@@ -162,6 +162,7 @@ def train():
         embed_dim=config["model"]["embed_dim"],
         hidden_dim=config["model"]["hidden_dim"],
         num_heads=config["model"]["num_heads"],
+        n_layers=config["model"]["n_layers"],
     )
 
     dummy_img = tf.zeros((1, 224, 224, 3), dtype=tf.float32)
